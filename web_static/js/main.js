@@ -1,0 +1,858 @@
+// 全局变量
+const API_BASE = '';
+let currentTrainingTask = null;
+let currentDiagnosisTask = null;
+let currentRULTask = null;
+
+// 页面初始化
+document.addEventListener('DOMContentLoaded', function() {
+    initNavigation();
+    updateTime();
+    loadDashboard();
+    
+    // 文件上传监听
+    setupFileUploadListeners();
+    
+    // 定时更新时间
+    setInterval(updateTime, 1000);
+});
+
+// 导航功能
+function initNavigation() {
+    const navItems = document.querySelectorAll('.nav-item');
+    navItems.forEach(item => {
+        item.addEventListener('click', function(e) {
+            e.preventDefault();
+            const pageName = this.dataset.page;
+            switchPage(pageName);
+            
+            // 更新导航状态
+            navItems.forEach(nav => nav.classList.remove('active'));
+            this.classList.add('active');
+            
+            // 更新页面标题
+            document.getElementById('page-title').textContent = this.querySelector('span').textContent;
+        });
+    });
+}
+
+// 页面切换
+function switchPage(pageName) {
+    const pages = document.querySelectorAll('.page');
+    pages.forEach(page => page.classList.remove('active'));
+    
+    const targetPage = document.getElementById(`${pageName}-page`);
+    if (targetPage) {
+        targetPage.classList.add('active');
+        
+        // 页面切换时加载相应数据
+        switch(pageName) {
+            case 'dashboard':
+                loadDashboard();
+                break;
+            case 'models':
+                loadModels();
+                break;
+            case 'devices':
+                loadDevices();
+                break;
+            case 'history':
+                loadHistory();
+                break;
+        }
+    }
+}
+
+// 更新时间
+function updateTime() {
+    const now = new Date();
+    const timeStr = now.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+    document.getElementById('current-time').textContent = timeStr;
+}
+
+// 加载仪表盘数据
+async function loadDashboard() {
+    try {
+        // 加载模型数量
+        const modelsRes = await fetch(`${API_BASE}/api/models`);
+        const modelsData = await modelsRes.json();
+        document.getElementById('model-count').textContent = modelsData.success ? modelsData.models.length : 0;
+        
+        // 加载设备数量
+        const devicesRes = await fetch(`${API_BASE}/api/devices`);
+        const devicesData = await devicesRes.json();
+        document.getElementById('device-count').textContent = devicesData.success ? devicesData.devices.length : 0;
+        
+        // 加载诊断历史
+        const diagnosisRes = await fetch(`${API_BASE}/api/diagnosis_history`);
+        const diagnosisData = await diagnosisRes.json();
+        document.getElementById('diagnosis-count').textContent = diagnosisData.success ? diagnosisData.diagnoses.length : 0;
+        
+        // 数据集数量（这里简化处理）
+        document.getElementById('dataset-count').textContent = '10';
+    } catch (error) {
+        console.error('加载仪表盘数据失败:', error);
+    }
+}
+
+// 文件上传监听
+function setupFileUploadListeners() {
+    // 单个文件上传
+    document.getElementById('single-file').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            document.getElementById('single-file-info').innerHTML = `
+                <i class="fas fa-file"></i> ${file.name} (${formatFileSize(file.size)})
+                <button class="btn btn-primary" style="margin-left: 10px;" onclick="uploadSingleFile()">
+                    <i class="fas fa-upload"></i> 上传
+                </button>
+            `;
+        }
+    });
+    
+    // 数据集文件上传
+    document.getElementById('dataset-files').addEventListener('change', function(e) {
+        const files = e.target.files;
+        if (files.length > 0) {
+            let info = `<p>已选择 ${files.length} 个文件:</p><ul>`;
+            for (let file of files) {
+                info += `<li><i class="fas fa-file"></i> ${file.name}</li>`;
+            }
+            info += '</ul>';
+            document.getElementById('dataset-files-info').innerHTML = info;
+        }
+    });
+    
+    // 诊断文件上传
+    document.getElementById('diagnosis-file').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            // 先上传文件
+            uploadDiagnosisFile(file);
+        }
+    });
+    
+    // RUL文件上传
+    document.getElementById('rul-file').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            uploadRULFile(file);
+        }
+    });
+}
+
+// 上传单个文件
+async function uploadSingleFile() {
+    const fileInput = document.getElementById('single-file');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        alert('请先选择文件');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/upload_data`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('上传成功！');
+            document.getElementById('single-file-info').innerHTML += `
+                <p style="color: var(--success-color); margin-top: 10px;">
+                    <i class="fas fa-check-circle"></i> 文件已保存: ${result.filename}
+                </p>
+            `;
+        } else {
+            alert('上传失败: ' + result.message);
+        }
+    } catch (error) {
+        alert('上传失败: ' + error.message);
+    }
+}
+
+// 上传数据集
+async function uploadDataset() {
+    const fileInput = document.getElementById('dataset-files');
+    const datasetName = document.getElementById('dataset-name').value;
+    const files = fileInput.files;
+    
+    if (!datasetName) {
+        alert('请输入数据集名称');
+        return;
+    }
+    
+    if (files.length === 0) {
+        alert('请选择文件');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('dataset_name', datasetName);
+    for (let file of files) {
+        formData.append('files[]', file);
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/upload_dataset`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert(`上传成功！数据集路径: ${result.dataset_path}`);
+            document.getElementById('dataset-files-info').innerHTML += `
+                <p style="color: var(--success-color); margin-top: 10px;">
+                    <i class="fas fa-check-circle"></i> 数据集已保存<br>
+                    路径: ${result.dataset_path}
+                </p>
+            `;
+            // 自动填充到训练页面
+            document.getElementById('training-data-path').value = result.dataset_path;
+        } else {
+            alert('上传失败: ' + result.message);
+        }
+    } catch (error) {
+        alert('上传失败: ' + error.message);
+    }
+}
+
+// 开始训练
+async function startTraining() {
+    const modelType = document.getElementById('model-type').value;
+    const dataPath = document.getElementById('training-data-path').value;
+    const signalLength = parseInt(document.getElementById('signal-length').value);
+    const signalNumber = parseInt(document.getElementById('signal-number').value);
+    const batchSize = parseInt(document.getElementById('batch-size').value);
+    const epochs = parseInt(document.getElementById('epochs').value);
+    const enhance = document.getElementById('data-enhance').checked;
+    
+    if (!dataPath) {
+        alert('请输入训练数据路径');
+        return;
+    }
+    
+    const requestData = {
+        model_type: modelType,
+        data_path: dataPath,
+        signal_length: signalLength,
+        signal_number: signalNumber,
+        batch_size: batchSize,
+        epochs: epochs,
+        enhance: enhance
+    };
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/train_model`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            currentTrainingTask = result.task_id;
+            showTrainingProgress();
+            monitorTrainingProgress();
+        } else {
+            alert('启动训练失败: ' + result.message);
+        }
+    } catch (error) {
+        alert('启动训练失败: ' + error.message);
+    }
+}
+
+// 显示训练进度
+function showTrainingProgress() {
+    document.getElementById('training-progress').style.display = 'block';
+    document.getElementById('training-result').style.display = 'none';
+}
+
+// 监控训练进度
+async function monitorTrainingProgress() {
+    if (!currentTrainingTask) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/training_status/${currentTrainingTask}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            const task = result.task;
+            document.getElementById('training-status').textContent = task.message;
+            
+            if (task.status === 'completed') {
+                // 训练完成
+                document.getElementById('training-progress').style.display = 'none';
+                showTrainingResult(task.result);
+            } else if (task.status === 'failed') {
+                // 训练失败
+                document.getElementById('training-progress').style.display = 'none';
+                alert('训练失败: ' + task.message);
+            } else {
+                // 继续监控
+                setTimeout(monitorTrainingProgress, 2000);
+            }
+        }
+    } catch (error) {
+        console.error('查询训练状态失败:', error);
+        setTimeout(monitorTrainingProgress, 2000);
+    }
+}
+
+// 显示训练结果
+function showTrainingResult(result) {
+    const resultDiv = document.getElementById('training-result');
+    const contentDiv = document.getElementById('training-result-content');
+    
+    contentDiv.innerHTML = `
+        <div class="result-card">
+            <h4>模型路径</h4>
+            <p style="font-size: 14px; word-break: break-all;">${result.model_path}</p>
+        </div>
+        <div class="result-card">
+            <h4>测试准确率</h4>
+            <p>${(result.accuracy * 100).toFixed(2)}%</p>
+        </div>
+        <div class="result-card" style="grid-column: 1 / -1;">
+            <h4>分类报告</h4>
+            <pre style="font-size: 12px; overflow-x: auto;">${result.classification_report}</pre>
+        </div>
+        <div class="result-card" style="grid-column: 1 / -1;">
+            <h4>训练图表</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 16px;">
+                <img src="${API_BASE}/api/chart/${currentTrainingTask}/${result.model_path.split('/').pop().split('.')[0]}_train_valid_acc.png" style="width: 100%; border-radius: 8px;">
+                <img src="${API_BASE}/api/chart/${currentTrainingTask}/${result.model_path.split('/').pop().split('.')[0]}_train_valid_loss.png" style="width: 100%; border-radius: 8px;">
+                <img src="${API_BASE}/api/chart/${currentTrainingTask}/${result.model_path.split('/').pop().split('.')[0]}_confusion_matrix.png" style="width: 100%; border-radius: 8px;">
+            </div>
+        </div>
+    `;
+    
+    resultDiv.style.display = 'block';
+}
+
+// 加载模型列表
+async function loadModels() {
+    try {
+        const response = await fetch(`${API_BASE}/api/models`);
+        const result = await response.json();
+        
+        if (result.success) {
+            // 更新模型表格
+            const tbody = document.getElementById('models-list');
+            tbody.innerHTML = '';
+            
+            result.models.forEach(model => {
+                const row = `
+                    <tr>
+                        <td>${model.name}</td>
+                        <td>${model.type}</td>
+                        <td>${(model.accuracy * 100).toFixed(2)}%</td>
+                        <td>${model.train_time}</td>
+                        <td>
+                            <button class="btn btn-danger" onclick="deleteModel('${model.id}')">
+                                <i class="fas fa-trash"></i> 删除
+                            </button>
+                        </td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+            
+            // 更新诊断页面的模型下拉框
+            const diagnosisSelect = document.getElementById('diagnosis-model');
+            diagnosisSelect.innerHTML = '<option value="">-- 请选择模型 --</option>';
+            result.models.forEach(model => {
+                diagnosisSelect.innerHTML += `<option value="${model.path}">${model.name} (${model.type})</option>`;
+            });
+        }
+    } catch (error) {
+        console.error('加载模型列表失败:', error);
+    }
+}
+
+// 删除模型
+async function deleteModel(modelId) {
+    if (!confirm('确定要删除此模型吗？')) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/model/${modelId}`, {
+            method: 'DELETE'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('删除成功');
+            loadModels();
+        } else {
+            alert('删除失败: ' + result.message);
+        }
+    } catch (error) {
+        alert('删除失败: ' + error.message);
+    }
+}
+
+// 上传诊断文件
+async function uploadDiagnosisFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/upload_data`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            document.getElementById('diagnosis-data-path').value = result.filepath;
+        } else {
+            alert('上传失败: ' + result.message);
+        }
+    } catch (error) {
+        alert('上传失败: ' + error.message);
+    }
+}
+
+// 开始诊断
+async function startDiagnosis() {
+    const modelPath = document.getElementById('diagnosis-model').value;
+    const dataPath = document.getElementById('diagnosis-data-path').value;
+    
+    if (!modelPath) {
+        alert('请选择诊断模型');
+        return;
+    }
+    
+    if (!dataPath) {
+        alert('请输入数据文件路径或上传文件');
+        return;
+    }
+    
+    const requestData = {
+        model_path: modelPath,
+        data_path: dataPath
+    };
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/diagnose`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            currentDiagnosisTask = result.task_id;
+            showDiagnosisProgress();
+            monitorDiagnosisProgress();
+        } else {
+            alert('启动诊断失败: ' + result.message);
+        }
+    } catch (error) {
+        alert('启动诊断失败: ' + error.message);
+    }
+}
+
+// 显示诊断进度
+function showDiagnosisProgress() {
+    document.getElementById('diagnosis-progress').style.display = 'block';
+    document.getElementById('diagnosis-result').style.display = 'none';
+}
+
+// 监控诊断进度
+async function monitorDiagnosisProgress() {
+    if (!currentDiagnosisTask) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/diagnosis_status/${currentDiagnosisTask}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            const task = result.task;
+            document.getElementById('diagnosis-status').textContent = task.message;
+            
+            if (task.status === 'completed') {
+                // 诊断完成
+                document.getElementById('diagnosis-progress').style.display = 'none';
+                showDiagnosisResult(task.result);
+            } else if (task.status === 'failed') {
+                // 诊断失败
+                document.getElementById('diagnosis-progress').style.display = 'none';
+                alert('诊断失败: ' + task.message);
+            } else {
+                // 继续监控
+                setTimeout(monitorDiagnosisProgress, 1000);
+            }
+        }
+    } catch (error) {
+        console.error('查询诊断状态失败:', error);
+        setTimeout(monitorDiagnosisProgress, 1000);
+    }
+}
+
+// 显示诊断结果
+function showDiagnosisResult(result) {
+    const resultDiv = document.getElementById('diagnosis-result');
+    const contentDiv = document.getElementById('diagnosis-result-content');
+    
+    // 根据结果设置图标和颜色
+    let icon = 'fa-check-circle';
+    let color = 'var(--success-color)';
+    
+    if (result.includes('故障')) {
+        icon = 'fa-exclamation-triangle';
+        color = 'var(--danger-color)';
+    }
+    
+    contentDiv.innerHTML = `
+        <div class="result-icon" style="color: ${color};">
+            <i class="fas ${icon}"></i>
+        </div>
+        <div class="result-text" style="color: ${color};">${result}</div>
+        <div class="result-description">诊断完成时间: ${new Date().toLocaleString('zh-CN')}</div>
+    `;
+    
+    resultDiv.style.display = 'block';
+}
+
+// 上传RUL文件
+async function uploadRULFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/upload_data`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            document.getElementById('rul-data-path').value = result.filepath;
+        } else {
+            alert('上传失败: ' + result.message);
+        }
+    } catch (error) {
+        alert('上传失败: ' + error.message);
+    }
+}
+
+// 开始RUL预测
+async function startRULPrediction() {
+    const modelPath = document.getElementById('rul-model').value;
+    const dataPath = document.getElementById('rul-data-path').value;
+    
+    if (!dataPath) {
+        alert('请输入数据文件路径或上传文件');
+        return;
+    }
+    
+    const requestData = {
+        model_path: modelPath || 'rule-based',
+        data_path: dataPath
+    };
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/predict_rul`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            currentRULTask = result.task_id;
+            showRULProgress();
+            monitorRULProgress();
+        } else {
+            alert('启动预测失败: ' + result.message);
+        }
+    } catch (error) {
+        alert('启动预测失败: ' + error.message);
+    }
+}
+
+// 显示RUL进度
+function showRULProgress() {
+    document.getElementById('rul-progress').style.display = 'block';
+    document.getElementById('rul-result').style.display = 'none';
+}
+
+// 监控RUL进度
+async function monitorRULProgress() {
+    if (!currentRULTask) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/rul_status/${currentRULTask}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            const task = result.task;
+            document.getElementById('rul-status').textContent = task.message;
+            
+            if (task.status === 'completed') {
+                // 预测完成
+                document.getElementById('rul-progress').style.display = 'none';
+                showRULResult(task.result);
+            } else if (task.status === 'failed') {
+                // 预测失败
+                document.getElementById('rul-progress').style.display = 'none';
+                alert('预测失败: ' + task.message);
+            } else {
+                // 继续监控
+                setTimeout(monitorRULProgress, 1000);
+            }
+        }
+    } catch (error) {
+        console.error('查询RUL状态失败:', error);
+        setTimeout(monitorRULProgress, 1000);
+    }
+}
+
+// 显示RUL结果
+function showRULResult(result) {
+    const resultDiv = document.getElementById('rul-result');
+    const contentDiv = document.getElementById('rul-result-content');
+    
+    contentDiv.innerHTML = `
+        <div class="rul-card">
+            <h4>剩余使用寿命</h4>
+            <div class="value">${result.rul.toFixed(1)}</div>
+            <div class="unit">小时</div>
+        </div>
+        <div class="rul-card" style="background: linear-gradient(135deg, var(--success-color), var(--info-color));">
+            <h4>健康指数</h4>
+            <div class="value">${result.health_index.toFixed(1)}</div>
+            <div class="unit">/ 100</div>
+        </div>
+        <div class="rul-card" style="background: linear-gradient(135deg, var(--warning-color), var(--danger-color));">
+            <h4>设备状态</h4>
+            <div class="value">${result.status}</div>
+            <div class="unit">置信度: ${(result.confidence * 100).toFixed(1)}%</div>
+        </div>
+    `;
+    
+    resultDiv.style.display = 'block';
+}
+
+// 加载设备列表
+async function loadDevices() {
+    try {
+        const response = await fetch(`${API_BASE}/api/devices`);
+        const result = await response.json();
+        
+        if (result.success) {
+            const container = document.getElementById('devices-list');
+            container.innerHTML = '';
+            
+            result.devices.forEach(device => {
+                const card = `
+                    <div class="device-card">
+                        <div class="device-card-header">
+                            <div>
+                                <h3>${device.name}</h3>
+                                <p class="device-info"><i class="fas fa-tag"></i> ${device.type}</p>
+                                <p class="device-info"><i class="fas fa-map-marker-alt"></i> ${device.location}</p>
+                            </div>
+                            <span class="device-status ${device.status}">${device.status === 'normal' ? '正常' : device.status}</span>
+                        </div>
+                        <button class="btn btn-danger" onclick="deleteDevice('${device.id}')">
+                            <i class="fas fa-trash"></i> 删除
+                        </button>
+                    </div>
+                `;
+                container.innerHTML += card;
+            });
+        }
+    } catch (error) {
+        console.error('加载设备列表失败:', error);
+    }
+}
+
+// 显示添加设备对话框
+function showAddDeviceDialog() {
+    document.getElementById('dialog-overlay').classList.add('active');
+    document.getElementById('add-device-dialog').classList.add('active');
+}
+
+// 关闭对话框
+function closeDialog() {
+    document.getElementById('dialog-overlay').classList.remove('active');
+    document.getElementById('add-device-dialog').classList.remove('active');
+}
+
+// 添加设备
+async function addDevice() {
+    const name = document.getElementById('device-name').value;
+    const type = document.getElementById('device-type').value;
+    const location = document.getElementById('device-location').value;
+    
+    if (!name || !type || !location) {
+        alert('请填写所有字段');
+        return;
+    }
+    
+    const requestData = {
+        name: name,
+        type: type,
+        location: location
+    };
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/device`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('添加成功');
+            closeDialog();
+            loadDevices();
+            // 清空表单
+            document.getElementById('device-name').value = '';
+            document.getElementById('device-type').value = '';
+            document.getElementById('device-location').value = '';
+        } else {
+            alert('添加失败: ' + result.message);
+        }
+    } catch (error) {
+        alert('添加失败: ' + error.message);
+    }
+}
+
+// 删除设备
+async function deleteDevice(deviceId) {
+    if (!confirm('确定要删除此设备吗？')) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/device/${deviceId}`, {
+            method: 'DELETE'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('删除成功');
+            loadDevices();
+        } else {
+            alert('删除失败: ' + result.message);
+        }
+    } catch (error) {
+        alert('删除失败: ' + error.message);
+    }
+}
+
+// 加载历史记录
+async function loadHistory() {
+    loadDiagnosisHistory();
+    loadRULHistory();
+}
+
+// 加载诊断历史
+async function loadDiagnosisHistory() {
+    try {
+        const response = await fetch(`${API_BASE}/api/diagnosis_history`);
+        const result = await response.json();
+        
+        if (result.success) {
+            const tbody = document.getElementById('diagnosis-history-list');
+            tbody.innerHTML = '';
+            
+            result.diagnoses.reverse().forEach(record => {
+                const row = `
+                    <tr>
+                        <td>${record.time}</td>
+                        <td>${record.model_path.split('/').pop()}</td>
+                        <td>${record.data_path.split('/').pop()}</td>
+                        <td><strong>${record.result}</strong></td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+        }
+    } catch (error) {
+        console.error('加载诊断历史失败:', error);
+    }
+}
+
+// 加载RUL历史
+async function loadRULHistory() {
+    try {
+        const response = await fetch(`${API_BASE}/api/rul_history`);
+        const result = await response.json();
+        
+        if (result.success) {
+            const tbody = document.getElementById('rul-history-list');
+            tbody.innerHTML = '';
+            
+            result.predictions.reverse().forEach(record => {
+                const row = `
+                    <tr>
+                        <td>${record.time}</td>
+                        <td>${record.model_path.split('/').pop()}</td>
+                        <td>${record.data_path.split('/').pop()}</td>
+                        <td>${record.rul.toFixed(1)} 小时</td>
+                        <td>${record.confidence ? (record.confidence * 100).toFixed(1) + '%' : 'N/A'}</td>
+                        <td><strong>${record.status || 'N/A'}</strong></td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+        }
+    } catch (error) {
+        console.error('加载RUL历史失败:', error);
+    }
+}
+
+// 切换历史标签
+function showHistoryTab(tab) {
+    const tabs = document.querySelectorAll('.tab-btn');
+    tabs.forEach(t => t.classList.remove('active'));
+    event.target.closest('.tab-btn').classList.add('active');
+    
+    const contents = document.querySelectorAll('.history-content');
+    contents.forEach(c => c.classList.remove('active'));
+    document.getElementById(`${tab}-history`).classList.add('active');
+}
+
+// 工具函数：格式化文件大小
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
