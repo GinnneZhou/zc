@@ -704,8 +704,17 @@ function showAddDeviceDialog() {
 
 // 关闭对话框
 function closeDialog() {
-    document.getElementById('dialog-overlay').classList.remove('active');
+    // 隐藏遮罩层
+    const overlay = document.getElementById('dialog-overlay');
+    overlay.classList.remove('active');
+    overlay.style.display = 'none';
+    
+    // 隐藏所有对话框
     document.getElementById('add-device-dialog').classList.remove('active');
+    document.getElementById('add-device-dialog').style.display = 'none';
+    
+    document.getElementById('change-password-dialog').classList.remove('active');
+    document.getElementById('change-password-dialog').style.display = 'none';
 }
 
 // 添加设备
@@ -856,3 +865,115 @@ function formatFileSize(bytes) {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
+// ==================== 用户管理功能 ====================
+function toggleUserMenu() {
+    const menu = document.getElementById('user-menu');
+    menu.classList.toggle('hidden');
+}
+
+// 点击页面其他地方时自动关闭菜单
+document.addEventListener('click', function(e) {
+    const userName = document.getElementById('user-name');
+    const userMenu = document.getElementById('user-menu');
+    if (!userMenu.contains(e.target) && e.target !== userName) {
+        userMenu.classList.add('hidden');
+    }
+});
+
+// 显示修改密码对话框
+function showChangePasswordDialog() {
+    document.getElementById('dialog-overlay').style.display = 'block';
+    document.getElementById('change-password-dialog').style.display = 'block';
+    // 清空输入框
+    document.getElementById('old-password').value = '';
+    document.getElementById('new-password').value = '';
+    document.getElementById('confirm-password').value = '';
+    document.getElementById('password-message').style.display = 'none';
+}
+
+// 修改密码
+async function changePassword() {
+    const oldPassword = document.getElementById('old-password').value;
+    const newPassword = document.getElementById('new-password').value;
+    const confirmPassword = document.getElementById('confirm-password').value;
+    const messageDiv = document.getElementById('password-message');
+    
+    // 验证输入
+    if (!oldPassword || !newPassword || !confirmPassword) {
+        showPasswordMessage('请填写所有字段', 'error');
+        return;
+    }
+    
+    if (newPassword.length < 6) {
+        showPasswordMessage('新密码长度不能少于6位', 'error');
+        return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+        showPasswordMessage('两次输入的新密码不一致', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/change_password', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+            body: JSON.stringify({
+                old_password: oldPassword,
+                new_password: newPassword
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showPasswordMessage('密码修改成功！', 'success');
+            // 2秒后关闭对话框
+            setTimeout(() => {
+                closeDialog();
+            }, 2000);
+        } else {
+            showPasswordMessage(data.message || '修改失败', 'error');
+        }
+    } catch (error) {
+        console.error('修改密码失败:', error);
+        showPasswordMessage('网络错误，请重试', 'error');
+    }
+}
+
+// 显示密码修改消息
+function showPasswordMessage(text, type) {
+    const messageDiv = document.getElementById('password-message');
+    messageDiv.textContent = text;
+    messageDiv.className = `message ${type}`;
+    messageDiv.style.display = 'block';
+}
+
+// 登出
+async function logout() {
+    if (!confirm('确定要退出登录吗？')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/logout', {
+            method: 'POST',
+            credentials: 'include'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // 跳转到登录页
+            window.location.href = '/';
+        } else {
+            alert('登出失败，请重试');
+        }
+    } catch (error) {
+        console.error('登出失败:', error);
+        alert('网络错误，请重试');
+    }
+}

@@ -18,7 +18,7 @@
 import matplotlib
 matplotlib.use('Agg')
 
-from flask import Flask, render_template, request, jsonify, send_file, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, session
 from flask_cors import CORS
 import os
 import json
@@ -30,6 +30,7 @@ from werkzeug.utils import secure_filename
 import threading
 import uuid
 import shutil
+from functools import wraps
 
 # 导入项目模块
 from data_preprocess import training_stage_prepro, diagnosis_stage_prepro
@@ -39,6 +40,9 @@ from preprocess_train_result import plot_history_curcvs, plot_confusion_matrix, 
 from utils import generate_md5
 from rul_prediction import predict_rul, training_rul_model
 
+# 导入MySQL认证模块
+from mysql_auth import verify_user, add_user, change_password, delete_user, list_users, init_database
+
 # 创建Flask应用
 app = Flask(__name__, 
             static_folder='web_static',
@@ -46,6 +50,7 @@ app = Flask(__name__,
 CORS(app)
 
 # 配置
+app.config['SECRET_KEY'] = 'secret_key'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 最大上传100MB
 app.config['UPLOAD_FOLDER'] = './uploads'
 app.config['MODEL_FOLDER'] = './models'
@@ -57,14 +62,27 @@ for folder in [app.config['UPLOAD_FOLDER'], app.config['MODEL_FOLDER'],
                app.config['CACHE_FOLDER']]:
     os.makedirs(folder, exist_ok=True)
 
+# 初始化MySQL数据库
+init_database()
+
 # 全局变量：存储训练任务状态
 training_tasks = {}
 diagnosis_tasks = {}
 rul_tasks = {}
 
-# 数据库（使用JSON文件简单实现）
+# ==================== 装饰器：登录验证 ====================
+def login_required(f):
+    """登录验证装饰器"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'username' not in session:
+            return jsonify({'success': False, 'message': '请先登录', 'code': 401}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+# 模型数据库（使用JSON文件简单实现）
 def load_database():
-    """加载数据库"""
+    """加载模型数据库"""
     if os.path.exists(app.config['DATABASE_FILE']):
         with open(app.config['DATABASE_FILE'], 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -76,18 +94,122 @@ def load_database():
     }
 
 def save_database(db):
-    """保存数据库"""
+    """保存模型数据库"""
     with open(app.config['DATABASE_FILE'], 'w', encoding='utf-8') as f:
         json.dump(db, f, indent=2, ensure_ascii=False)
 
 # ==================== 路由：主页 ====================
-@app.route('/')
+@app.route('/index')
 def index():
     """主页"""
-    return render_template('index.html')
+    username = session.get('username', '未登录')
+    return render_template('index.html', username=username)
+
+
+@app.route('/')
+def login_page():
+    """登录页面"""
+    return render_template('login.html')
+
+# ==================== API：用户认证 ====================
+@app.route('/api/login', methods=['POST'])
+def login():
+    """用户登录"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        
+        if not username or not password:
+            return jsonify({'success': False, 'message': '用户名和密码不能为空'})
+        
+        # 验证用户
+        if verify_user(username, password):
+            session['username'] = username
+            return jsonify({
+                'success': True, 
+                'message': '登录成功',
+                'username': username
+            })
+        else:
+            return jsonify({'success': False, 'message': '用户名或密码错误'})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'登录失败: {str(e)}'})
+
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    """用户登出"""
+    session.pop('username', None)
+    return jsonify({'success': True, 'message': '已退出登录'})
+
+
+@app.route('/api/check_login', methods=['GET'])
+def check_login():
+    """检查登录状态"""
+    if 'username' in session:
+        return jsonify({
+            'success': True, 
+            'logged_in': True,
+            'username': session['username']
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'logged_in': False
+        })
+
+
+@app.route('/api/change_password', methods=['POST'])
+@login_required
+def api_change_password():
+    """修改密码"""
+    try:
+        data = request.get_json()
+        old_password = data.get('old_password', '')
+        new_password = data.get('new_password', '')
+        
+        if not old_password or not new_password:
+            return jsonify({'success': False, 'message': '密码不能为空'})
+        
+        if len(new_password) < 6:
+            return jsonify({'success': False, 'message': '新密码长度不能少于6位'})
+        
+        username = session['username']
+        success, message = change_password(username, old_password, new_password)
+        
+        return jsonify({'success': success, 'message': message})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'修改密码失败: {str(e)}'})
+
+
+# ==================== API：用户管理 ====================
+@app.route('/api/users', methods=['POST'])
+def create_user():
+    """注册用户"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        
+        if not username or not password:
+            return jsonify({'success': False, 'message': '用户名和密码不能为空'})
+        
+        if len(password) < 6:
+            return jsonify({'success': False, 'message': '密码长度不能少于6位'})
+        
+        success, message = add_user(username, password)
+        return jsonify({'success': success, 'message': message})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+    
 
 # ==================== API：数据管理 ====================
 @app.route('/api/upload_data', methods=['POST'])
+@login_required
 def upload_data():
     """上传数据文件"""
     try:
@@ -118,6 +240,7 @@ def upload_data():
         return jsonify({'success': False, 'message': f'上传失败: {str(e)}'})
 
 @app.route('/api/upload_dataset', methods=['POST'])
+@login_required
 def upload_dataset():
     """上传数据集（多个文件）"""
     try:
@@ -272,6 +395,7 @@ def train_model_thread(task_id, model_type, data_path, params):
         training_tasks[task_id]['error'] = str(e)
 
 @app.route('/api/train_model', methods=['POST'])
+@login_required
 def train_model():
     """启动模型训练"""
     try:
@@ -397,6 +521,7 @@ def diagnose_thread(task_id, model_path, data_path):
         diagnosis_tasks[task_id]['error'] = str(e)
 
 @app.route('/api/diagnose', methods=['POST'])
+@login_required
 def diagnose():
     """启动故障诊断"""
     try:
@@ -476,6 +601,7 @@ def rul_prediction_thread(task_id, model_path, data_path):
         rul_tasks[task_id]['error'] = str(e)
 
 @app.route('/api/predict_rul', methods=['POST'])
+@login_required
 def predict_rul_api():
     """启动剩余寿命预测"""
     try:
@@ -524,6 +650,7 @@ def rul_status(task_id):
 
 # ==================== API：模型管理 ====================
 @app.route('/api/models', methods=['GET'])
+@login_required
 def list_models():
     """获取模型列表"""
     try:
@@ -536,6 +663,7 @@ def list_models():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/model/<model_id>', methods=['DELETE'])
+@login_required
 def delete_model(model_id):
     """删除模型"""
     try:
@@ -561,6 +689,7 @@ def delete_model(model_id):
 
 # ==================== API：设备管理 ====================
 @app.route('/api/devices', methods=['GET'])
+@login_required
 def list_devices():
     """获取设备列表"""
     try:
@@ -573,6 +702,7 @@ def list_devices():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/device', methods=['POST'])
+@login_required
 def add_device():
     """添加设备"""
     try:
@@ -596,6 +726,7 @@ def add_device():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/device/<device_id>', methods=['DELETE'])
+@login_required
 def delete_device(device_id):
     """删除设备"""
     try:
@@ -608,6 +739,7 @@ def delete_device(device_id):
 
 # ==================== API：历史记录 ====================
 @app.route('/api/diagnosis_history', methods=['GET'])
+@login_required
 def diagnosis_history():
     """获取诊断历史"""
     try:
@@ -620,6 +752,7 @@ def diagnosis_history():
         return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/rul_history', methods=['GET'])
+@login_required
 def rul_history():
     """获取RUL预测历史"""
     try:
@@ -633,6 +766,7 @@ def rul_history():
 
 # ==================== API：图表和文件下载 ====================
 @app.route('/api/chart/<task_id>/<filename>')
+@login_required
 def get_chart(task_id, filename):
     """获取训练图表"""
     try:
@@ -642,6 +776,7 @@ def get_chart(task_id, filename):
         return jsonify({'success': False, 'message': str(e)}), 404
 
 @app.route('/api/download_model/<model_id>')
+@login_required
 def download_model(model_id):
     """下载模型文件"""
     try:

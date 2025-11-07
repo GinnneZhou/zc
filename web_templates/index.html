@@ -61,7 +61,15 @@
                 <span class="datetime" id="current-time"></span>
                 <div class="user-info">
                     <i class="fas fa-user-circle"></i>
-                    <span>管理员</span>
+                    <span id="user-name" onclick="toggleUserMenu()">{{ username }}</span>
+                    <div id="user-menu" class="user-menu hidden">
+                        <button class="btn-icon" onclick="showChangePasswordDialog()">
+                            <i class="fas fa-key"></i> 修改密码
+                        </button>
+                        <button class="btn-icon" onclick="logout()">
+                            <i class="fas fa-sign-out-alt"></i> 登出
+                        </button>
+                    </div>
                 </div>
             </div>
         </header>
@@ -425,6 +433,8 @@
 
     <!-- 对话框 -->
     <div id="dialog-overlay" class="dialog-overlay" onclick="closeDialog()"></div>
+    
+    <!-- 添加设备对话框 -->
     <div id="add-device-dialog" class="dialog">
         <div class="dialog-header">
             <h3><i class="fas fa-plus"></i> 添加设备</h3>
@@ -447,6 +457,33 @@
         <div class="dialog-footer">
             <button class="btn btn-secondary" onclick="closeDialog()">取消</button>
             <button class="btn btn-primary" onclick="addDevice()">添加</button>
+        </div>
+    </div>
+
+    <!-- 修改密码对话框 -->
+    <div id="change-password-dialog" class="dialog">
+        <div class="dialog-header">
+            <h3><i class="fas fa-key"></i> 修改密码</h3>
+            <button onclick="closeDialog()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="dialog-content">
+            <div id="password-message" class="message" style="display:none;"></div>
+            <div class="form-group">
+                <label>旧密码</label>
+                <input type="password" id="old-password" class="input-field" autocomplete="current-password">
+            </div>
+            <div class="form-group">
+                <label>新密码（至少6位）</label>
+                <input type="password" id="new-password" class="input-field" autocomplete="new-password" minlength="6">
+            </div>
+            <div class="form-group">
+                <label>确认新密码</label>
+                <input type="password" id="confirm-password" class="input-field" autocomplete="new-password" minlength="6">
+            </div>
+        </div>
+        <div class="dialog-footer">
+            <button class="btn btn-secondary" onclick="closeDialog()">取消</button>
+            <button class="btn btn-primary" onclick="changePassword()">确认修改</button>
         </div>
     </div>
 
